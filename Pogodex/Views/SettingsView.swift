@@ -9,20 +9,14 @@ struct SettingsView: View {
     @AppStorage("app_language") private var storedLanguage: String?
     @AppStorage("trainer_nickname") private var trainerNickname: String = ""
     @AppStorage("app_theme") private var appTheme: Int = 0
+    @AppStorage("app_store_mode") private var isAppStoreMode: Bool = false
+    @AppStorage("pogomap_auth_username") private var pogoMapUsername: String = ""
+    @AppStorage("pogomap_auth_password") private var pogoMapPassword: String = ""
+    @State private var selectedLanguage = CurrentPokemonLanguageKey
     @State private var resetConfirmationText = ""
     @State private var showCredits = false
-    
-    private var languageBinding: Binding<String> {
-        Binding(
-            get: { storedLanguage ?? CurrentPokemonLanguageKey },
-            set: { newValue in
-                storedLanguage = newValue
-                CurrentPokemonLanguageKey = newValue
-                viewModel.objectWillChange.send()
-            }
-        )
-    }
-    
+    @State private var pogoMapCookieStatus: String?
+
     private var appVersion: String {
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
         let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"
@@ -96,7 +90,7 @@ struct SettingsView: View {
                 }
                 
                 Section("Général") {
-                    Picker(selection: languageBinding) {
+                    Picker(selection: $selectedLanguage) {
                         Text("English").tag("English")
                         Text("Français").tag("French")
                         Text("Deutsch").tag("German")
@@ -107,6 +101,11 @@ struct SettingsView: View {
                     } label: {
                         Label("Langue des Pokémon", systemImage: "globe")
                     }
+                    .onChange(of: selectedLanguage) { _, newValue in
+                        storedLanguage = newValue
+                        CurrentPokemonLanguageKey = newValue
+                        viewModel.objectWillChange.send()
+                    }
                     
                     Picker(selection: $appTheme) {
                         Text("Système").tag(0)
@@ -114,6 +113,10 @@ struct SettingsView: View {
                         Text("Sombre").tag(2)
                     } label: {
                         Label("Apparence", systemImage: "paintbrush")
+                    }
+                    
+                    Toggle(isOn: $isAppStoreMode) {
+                        Label("Pixéliser les Pokémon (App Store)", systemImage: "squareshape.split.3x3")
                     }
                     
                     #if DEBUG
@@ -125,6 +128,7 @@ struct SettingsView: View {
                     #if DEBUG
                     Label("Exporter mes données", systemImage: "square.and.arrow.up")
                     #endif
+
                     Button(role: .destructive) {
                         showResetAlert = true
                     } label: {
@@ -132,7 +136,36 @@ struct SettingsView: View {
                             .foregroundStyle(.red)
                     }
                 }
-                
+
+                Section("PogoMap") {
+                    TextField("Identifiant", text: $pogoMapUsername)
+                        .textInputAutocapitalization(.never)
+                        .disableAutocorrection(true)
+
+                    SecureField("Mot de passe", text: $pogoMapPassword)
+                        .textInputAutocapitalization(.never)
+                        .disableAutocorrection(true)
+
+                    Button {
+                        Task {
+                            pogoMapCookieStatus = "Connexion en cours..."
+                            let success = await PogoMapFetcher.refreshSessionCookieWithCredentialsPublic()
+                            pogoMapCookieStatus = success
+                                ? "Cookie PogoMap mis à jour avec succès !"
+                                : "Échec de connexion (vérifiez vos identifiants)."
+                        }
+                    } label: {
+                        Label("Se connecter à PogoMap", systemImage: "network")
+                    }
+                    .disabled(pogoMapUsername.isEmpty || pogoMapPassword.isEmpty)
+
+                    if let pogoMapCookieStatus {
+                        Text(pogoMapCookieStatus)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
                 Section("À propos") {
                     HStack {
                         Label("Version", systemImage: "info.circle")
@@ -182,6 +215,9 @@ struct SettingsView: View {
             } message: {
                 Text("Êtes-vous sûr de vouloir effacer toutes vos captures ? Cette action est irréversible. Tapez 'Pogodex' pour confirmer.")
             }
+        }
+        .task {
+            selectedLanguage = storedLanguage ?? CurrentPokemonLanguageKey
         }
         .preferredColorScheme(colorScheme)
         .animation(.easeInOut, value: appTheme)

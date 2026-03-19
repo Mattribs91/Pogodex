@@ -494,28 +494,67 @@ struct AssetForm: Codable, Identifiable {
         return URL(string: img)
     }
     
-    /// URL Haute Résolution (Home 3D Render) si disponible.
+    /// Base URL de PokeMiners (remplacement du repo RetroJohn86 supprimé).
+    private static let retroJohnBase = "https://raw.githubusercontent.com/RetroJohn86/PoGo-Unpacked-DL-Assets/main/Sprite/pm%20and%20portraits/"
+    private static let pokeMinersBase = "https://raw.githubusercontent.com/PokeMiners/pogo_assets/master/Images/Pokemon%20-%20256x256/Addressable%20Assets/"
+    
+    /// Convertit une URL RetroJohn cassée vers le repo PokeMiners (mêmes noms de fichiers).
+    private static func migrateURL(_ urlString: String) -> URL? {
+        if urlString.contains("RetroJohn86/PoGo-Unpacked-DL-Assets") {
+            // Extraire le nom du fichier (ex: pm1.cJAN_2020_NOEVOLVE.icon.png)
+            guard let filename = urlString.components(separatedBy: "/").last else { return nil }
+            return URL(string: pokeMinersBase + filename)
+        }
+        return URL(string: urlString)
+    }
+    
+    /// URL Haute Résolution si disponible.
     var highResImageURL: URL? {
         guard let img = image else { return nil }
-        // Pas de HD pour les costumes (chapeaux, etc.) car souvent indisponibles
-        guard costume == nil else { return imageURL }
         
-        let highRes = img.replacingOccurrences(of: "/sprites/pokemon/", with: "/sprites/pokemon/other/official-artwork/")
-        return URL(string: highRes)
+        // Si c'est une image RetroJohn cassée → migrer vers PokeMiners
+        if img.contains("RetroJohn86/PoGo-Unpacked-DL-Assets") {
+            return AssetForm.migrateURL(img)
+        }
+        
+        // Pour les formes régionales/autres, essayer PokeAPI HD
+        if img.contains("/sprites/pokemon/") {
+            let highRes = img.replacingOccurrences(of: "/sprites/pokemon/", with: "/sprites/pokemon/other/official-artwork/")
+            return URL(string: highRes)
+        }
+        
+        // Sinon utiliser l'image originale
+        return imageURL
     }
     
     var shinyImageURL: URL? {
         guard let img = shinyImage else { return nil }
+        
+        // Si c'est une image RetroJohn cassée → migrer vers PokeMiners
+        if img.contains("RetroJohn86/PoGo-Unpacked-DL-Assets") {
+            return AssetForm.migrateURL(img)
+        }
+        
         return URL(string: img)
     }
     
-    /// URL Haute Résolution Shiny (Home 3D Render) si disponible.
+    /// URL Haute Résolution Shiny si disponible.
     var highResShinyImageURL: URL? {
         guard let img = shinyImage else { return nil }
-        guard costume == nil else { return shinyImageURL }
         
-        let highRes = img.replacingOccurrences(of: "/sprites/pokemon/", with: "/sprites/pokemon/other/official-artwork/")
-        return URL(string: highRes)
+        // Si c'est une image RetroJohn cassée → migrer vers PokeMiners
+        if img.contains("RetroJohn86/PoGo-Unpacked-DL-Assets") {
+            return AssetForm.migrateURL(img)
+        }
+        
+        // Pour les formes régionales/autres, essayer PokeAPI HD
+        if img.contains("/sprites/pokemon/") {
+            let highRes = img.replacingOccurrences(of: "/sprites/pokemon/", with: "/sprites/pokemon/other/official-artwork/")
+            return URL(string: highRes)
+        }
+        
+        // Sinon utiliser l'image originale
+        return shinyImageURL
     }
     
     /// Nom affichable de la variante.

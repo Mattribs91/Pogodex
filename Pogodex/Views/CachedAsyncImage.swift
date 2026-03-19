@@ -98,51 +98,49 @@ actor ImageLoader {
             active -= 1
         }
     }
+
+    private func prefetchSingle(url: URL, size: CGFloat) async {
+        if await ImageCache.shared.image(for: url) != nil { return }
+
+        await acquire()
+        defer { release() }
+
+        if await ImageCache.shared.image(for: url) != nil { return }
+
+        do {
+            let (data, _) = try await session.data(from: url)
+
+            let options = [kCGImageSourceShouldCache: false] as CFDictionary
+            guard let source = CGImageSourceCreateWithData(data as CFData, options),
+                  CGImageSourceGetCount(source) > 0,
+                  CGImageSourceGetStatusAtIndex(source, 0) == .statusComplete else { return }
+
+            let maxDimension = max(size * 3.0, 1)
+            let downsampleOptions = [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceShouldCacheImmediately: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: maxDimension
+            ] as CFDictionary
+
+            guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, downsampleOptions) else { return }
+
+            #if canImport(UIKit)
+            let uiImg = UIImage(cgImage: cgImage)
+            await ImageCache.shared.storeNative(uiImg, for: url)
+            #elseif canImport(AppKit)
+            let nsImg = NSImage(cgImage: cgImage, size: NSSize(width: size, height: size))
+            await ImageCache.shared.storeNative(nsImg, for: url)
+            #endif
+        } catch {
+        }
+    }
     
     /// Précharge des URLs en arrière-plan (fire-and-forget, ne bloque pas)
     nonisolated func prefetchAhead(urls: [URL], size: CGFloat) {
         for url in urls {
-            // Skip si déjà en cache
-            // Note: In strict concurrency, shared might be isolated. We should check carefully.
-            // But from nonisolated context, we can't access MainActor property synchronously.
-            // We'll trust the task to handle the check.
-            
-            Task.detached(priority: .utility) {
-                // Check cache inside the task (on main actor if necessary, or await if isolated)
-                if await ImageCache.shared.image(for: url) != nil { return }
-                
-                await ImageLoader.shared.acquire()
-                defer { Task { await ImageLoader.shared.release() } }
-                
-                if await ImageCache.shared.image(for: url) != nil { return }
-                
-                do {
-                    let (data, _) = try await ImageLoader.shared.session.data(from: url)
-                    
-                    let options = [kCGImageSourceShouldCache: false] as CFDictionary
-                    guard let source = CGImageSourceCreateWithData(data as CFData, options),
-                          CGImageSourceGetCount(source) > 0,
-                          CGImageSourceGetStatusAtIndex(source, 0) == .statusComplete else { return }
-                    
-                    // Qualité Retina : 3x la taille pour bonne résolution sans gaspiller la RAM
-                    let maxDimension = max(size * 3.0, 1)
-                    let downsampleOptions = [
-                        kCGImageSourceCreateThumbnailFromImageAlways: true,
-                        kCGImageSourceShouldCacheImmediately: true,
-                        kCGImageSourceCreateThumbnailWithTransform: true,
-                        kCGImageSourceThumbnailMaxPixelSize: maxDimension
-                    ] as CFDictionary
-                    
-                    guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, downsampleOptions) else { return }
-                    
-                    #if canImport(UIKit)
-                    let uiImg = UIImage(cgImage: cgImage)
-                    await ImageCache.shared.storeNative(uiImg, for: url)
-                    #elseif canImport(AppKit)
-                    let nsImg = NSImage(cgImage: cgImage, size: NSSize(width: size, height: size))
-                    await ImageCache.shared.storeNative(nsImg, for: url)
-                    #endif
-                } catch {}
+            Task(priority: .utility) {
+                await ImageLoader.shared.prefetchSingle(url: url, size: size)
             }
         }
     }
@@ -229,6 +227,12 @@ final class ImageCache: @unchecked Sendable {
     }
     
     #if canImport(UIKit)
+    func uiImage(for url: URL) -> UIImage? {
+        return cache.object(forKey: url as NSURL)
+    }
+    #endif
+    
+    #if canImport(UIKit)
     func storeNative(_ image: UIImage, for url: URL) {
         let cost = image.cgImage.map { $0.bytesPerRow * $0.height } ?? 0
         cache.setObject(image, forKey: url as NSURL, cost: cost)
@@ -249,6 +253,8 @@ struct CachedAsyncImage: View {
     
     @State private var phase: LoadPhase
     @State private var lastImage: Image? = nil
+    
+    @AppStorage("app_store_mode") private var isAppStoreMode: Bool = false
     
     init(url: URL?, size: CGFloat, contentMode: ContentMode = .fit) {
         self.url = url
@@ -291,6 +297,9 @@ struct CachedAsyncImage: View {
                     .resizable()
                     .aspectRatio(contentMode: contentMode)
                     .transition(.opacity)
+                    #if canImport(UIKit)
+                    .modifier(PixelatedImageModifier(url: url, isAppStoreMode: isAppStoreMode))
+                    #endif
             } else if case .failure = phase {
                 Image(systemName: "photo")
                     .font(.system(size: size * 0.4))
@@ -424,3 +433,72 @@ struct CachedAsyncImage: View {
         }
     }
 }
+
+#if canImport(UIKit)
+import CoreImage
+import CoreImage.CIFilterBuiltins
+
+/// Singleton pour appliquer un filtre de pixellisation
+class PixelationFilter {
+    static let shared = PixelationFilter()
+    private let context = CIContext(options: [.useSoftwareRenderer: false])
+
+    func pixelate(image: UIImage, scale: Float = 12.0) -> UIImage {
+        guard let ciImage = CIImage(image: image) else { return image }
+        let filter = CIFilter.pixellate()
+        filter.inputImage = ciImage
+        filter.scale = scale
+        guard let outputCIImage = filter.outputImage,
+              let cgImage = context.createCGImage(outputCIImage, from: outputCIImage.extent) else {
+            return image
+        }
+        return UIImage(cgImage: cgImage)
+    }
+}
+
+struct PixelatedImageModifier: ViewModifier {
+    let url: URL?
+    let isAppStoreMode: Bool
+    
+    @State private var pixelatedImage: Image? = nil
+    
+    func body(content: Content) -> some View {
+        if isAppStoreMode, let u = url {
+            Group {
+                if let pix = pixelatedImage {
+                    pix
+                        .resizable()
+                        .interpolation(.none) // Anti-blur pour les gros pixels
+                } else {
+                    // Masqué le temps de générer le filtre
+                    content
+                        .opacity(0.1)
+                        .overlay { ProgressView() }
+                }
+            }
+            .task(id: u.absoluteString + "\(isAppStoreMode)") {
+                guard isAppStoreMode else { return }
+                
+                var imageToProcess: UIImage? = nil
+                
+                if let uiImg = ImageCache.shared.uiImage(for: u) {
+                    imageToProcess = uiImg
+                } else {
+                    // Fallback pour AsyncImage classique (ex: header HD)
+                    if let data = try? await URLSession.shared.data(from: u).0,
+                       let downloaded = UIImage(data: data) {
+                        imageToProcess = downloaded
+                    }
+                }
+                
+                if let img = imageToProcess {
+                    let pixelated = PixelationFilter.shared.pixelate(image: img, scale: 15.0)
+                    pixelatedImage = Image(uiImage: pixelated)
+                }
+            }
+        } else {
+            content
+        }
+    }
+}
+#endif

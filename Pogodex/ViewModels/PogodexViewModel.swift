@@ -8,6 +8,7 @@ import UIKit
 #endif
 
 /// ViewModel principal pour gérer la logique du Pokédex et le chargement via API.
+@MainActor
 class PogodexViewModel: ObservableObject {
     
     /// Liste plate des Pokémon (source de vérité).
@@ -38,7 +39,7 @@ class PogodexViewModel: ObservableObject {
     
     /// Indique si une synchronisation iCloud est en cours.
     @Published var isSyncing: Bool = false
-    
+
     private let logger = Logger(subsystem: "com.pogotracker", category: "PogoDexViewModel")
     private var saveTask: Task<Void, Never>?  // Debounce pour saveData
     
@@ -74,7 +75,7 @@ class PogodexViewModel: ObservableObject {
             // Groupement par génération
             self.groupedPokemons = Dictionary(grouping: self.pokemons, by: { $0.generation })
             self.generations = self.groupedPokemons.keys.sorted()
-            
+
             logger.info("Succès : \(self.pokemons.count) Pokémon chargés, répartis en \(self.generations.count) générations.")
             isLoading = false
         } catch {
@@ -108,7 +109,7 @@ class PogodexViewModel: ObservableObject {
             isLoading = false
         }
     }
-    
+
     /// Format ID: "{pokemonID}_{formID}_{shiny}"
     func captureID(pokemon: Pokemon, form: AssetForm, shiny: Bool) -> String {
         return "\(pokemon.id)_\(form.id)_\(shiny ? "shiny" : "normal")"
@@ -288,6 +289,10 @@ class PogodexViewModel: ObservableObject {
     private let luckySetKey = "lucky_captures_v1"
     
     private let trainerNicknameKey = "trainer_nickname"
+
+    private var canUseCloudStore: Bool {
+        FileManager.default.ubiquityIdentityToken != nil
+    }
     
     private func saveData() {
         // Annuler la tâche précédente si elle existe (Debounce)
@@ -307,16 +312,18 @@ class PogodexViewModel: ObservableObject {
                 UserDefaults.standard.set(luckyCounts, forKey: luckyCountsKey)
                 
                 // 2. Sauvegarde iCloud (NSUbiquitousKeyValueStore)
-                let cloudStore = NSUbiquitousKeyValueStore.default
-                cloudStore.set(capturedCounts, forKey: capturedCountsKey)
-                cloudStore.set(luckyCounts, forKey: luckyCountsKey)
-                
-                // Sauvegarder aussi le pseudo
-                if let nickname = UserDefaults.standard.string(forKey: trainerNicknameKey) {
-                    cloudStore.set(nickname, forKey: trainerNicknameKey)
+                if self.canUseCloudStore {
+                    let cloudStore = NSUbiquitousKeyValueStore.default
+                    cloudStore.set(capturedCounts, forKey: capturedCountsKey)
+                    cloudStore.set(luckyCounts, forKey: luckyCountsKey)
+
+                    // Sauvegarder aussi le pseudo
+                    if let nickname = UserDefaults.standard.string(forKey: trainerNicknameKey) {
+                        cloudStore.set(nickname, forKey: trainerNicknameKey)
+                    }
+
+                    cloudStore.synchronize()
                 }
-                
-                cloudStore.synchronize()
                 
                 // Petit délai pour montrer l'animation de synchro
                 try await Task.sleep(nanoseconds: 500_000_000)
@@ -335,16 +342,20 @@ class PogodexViewModel: ObservableObject {
     }
     
     private func loadData() {
+        isCloudSyncActive = canUseCloudStore
+
         // Observer les changements iCloud
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(iCloudDataDidChange(_:)),
-            name: NSUbiquitousKeyValueStore.didChangeExternallyNotification,
-            object: NSUbiquitousKeyValueStore.default
-        )
-        
-        // Synchroniser au démarrage
-        NSUbiquitousKeyValueStore.default.synchronize()
+        if canUseCloudStore {
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(iCloudDataDidChange(_:)),
+                name: NSUbiquitousKeyValueStore.didChangeExternallyNotification,
+                object: NSUbiquitousKeyValueStore.default
+            )
+
+            // Synchroniser au démarrage
+            NSUbiquitousKeyValueStore.default.synchronize()
+        }
         
         // Charger les données (priorité iCloud > Local)
         loadFromCloudOrLocal()
@@ -352,26 +363,24 @@ class PogodexViewModel: ObservableObject {
     
     @objc private func iCloudDataDidChange(_ notification: Notification) {
         // Recharger les données quand iCloud notifie d'un changement venant d'un autre appareil
-        DispatchQueue.main.async {
-            self.loadFromCloudOrLocal()
-        }
+        loadFromCloudOrLocal()
     }
     
     private func loadFromCloudOrLocal() {
-        let cloudStore = NSUbiquitousKeyValueStore.default
         let localStore = UserDefaults.standard
-        
+        let cloudStore: NSUbiquitousKeyValueStore? = canUseCloudStore ? .default : nil
+
         // Vérifier si iCloud est disponible (token non nil)
-        isCloudSyncActive = FileManager.default.ubiquityIdentityToken != nil
+        isCloudSyncActive = canUseCloudStore
         
         // --- CHARGEMENT PSEUDO ---
-        if let cloudNickname = cloudStore.string(forKey: trainerNicknameKey) {
+        if let cloudStore, let cloudNickname = cloudStore.string(forKey: trainerNicknameKey) {
             localStore.set(cloudNickname, forKey: trainerNicknameKey)
         }
         
         // --- CHARGEMENT CAPTURES ---
         // Essayer iCloud d'abord
-        if let cloudCounts = cloudStore.dictionary(forKey: capturedCountsKey) as? [String: Int] {
+        if let cloudStore, let cloudCounts = cloudStore.dictionary(forKey: capturedCountsKey) as? [String: Int] {
             capturedCounts = cloudCounts
             // Mettre à jour le local pour être synchro
             localStore.set(cloudCounts, forKey: capturedCountsKey)
@@ -389,7 +398,7 @@ class PogodexViewModel: ObservableObject {
         }
         
         // --- CHARGEMENT LUCKY ---
-        if let cloudLucky = cloudStore.dictionary(forKey: luckyCountsKey) as? [String: Int] {
+        if let cloudStore, let cloudLucky = cloudStore.dictionary(forKey: luckyCountsKey) as? [String: Int] {
             luckyCounts = cloudLucky
             localStore.set(cloudLucky, forKey: luckyCountsKey)
         }
@@ -440,10 +449,12 @@ class PogodexViewModel: ObservableObject {
         UserDefaults.standard.removeObject(forKey: luckySetKey)
         
         // Supprimer sur iCloud
-        let cloudStore = NSUbiquitousKeyValueStore.default
-        cloudStore.removeObject(forKey: capturedCountsKey)
-        cloudStore.removeObject(forKey: luckyCountsKey)
-        cloudStore.synchronize()
+        if canUseCloudStore {
+            let cloudStore = NSUbiquitousKeyValueStore.default
+            cloudStore.removeObject(forKey: capturedCountsKey)
+            cloudStore.removeObject(forKey: luckyCountsKey)
+            cloudStore.synchronize()
+        }
         
         saveData()
     }

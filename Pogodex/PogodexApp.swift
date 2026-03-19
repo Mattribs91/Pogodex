@@ -32,21 +32,15 @@ struct PogodexApp: App {
                 }
                 
                 Tab {
-                    NavigationStack {
-                        VStack(spacing: 16) {
-                            Image(systemName: "questionmark.circle")
-                                .font(.system(size: 40))
-                                .foregroundStyle(.tertiary)
-                            Text("À venir...")
-                                .font(.system(size: 16, weight: .medium, design: .rounded))
-                                .foregroundStyle(.secondary)
-                        }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .background(Color(UIColor.systemGroupedBackground))
-                        .navigationTitle("??")
-                    }
+                    GameEventsView(viewModel: viewModel)
                 } label: {
-                    Label("??", systemImage: "questionmark")
+                    Label("Événements", systemImage: "calendar")
+                }
+
+                Tab {
+                    GymsRaidsMapView(pogodexViewModel: viewModel)
+                } label: {
+                    Label("Carte", systemImage: "map")
                 }
                 
                 Tab(role: .search) {

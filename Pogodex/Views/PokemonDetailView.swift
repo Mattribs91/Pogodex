@@ -1,6 +1,10 @@
 import SwiftUI
 
 struct PokemonDetailView: View {
+    private struct ZoomedImageTarget: Identifiable {
+        let id: URL
+    }
+
     let pokemon: Pokemon
     @ObservedObject var viewModel: PogodexViewModel
     let showCaptureControls: Bool
@@ -13,10 +17,12 @@ struct PokemonDetailView: View {
     
     @State private var displayMode: DisplayMode = .normal
     @State private var selectedForm: AssetForm? = nil
-    @State private var zoomedImageURL: URL? = nil
+    @State private var zoomedImage: ZoomedImageTarget?
     @State private var searchText: String = ""
     @State private var headerImage: Image? = nil
+    @State private var hapticTrigger = 0
 
+    @AppStorage("app_store_mode") private var isAppStoreMode: Bool = false
     
     enum DisplayMode: String, CaseIterable, Identifiable {
         case normal = "Normal"
@@ -85,7 +91,7 @@ struct PokemonDetailView: View {
     private var hasTopSectionGroup: Bool {
         hasEvolutionSection || hasMegaSection
     }
-    
+
     /// URL de l'image affichée en haut selon forme sélectionnée + mode.
     private var headerImageURL: URL? {
         if let form = selectedForm {
@@ -161,6 +167,13 @@ struct PokemonDetailView: View {
                             }
                         }
                         
+                        // ── Stats & PC ──
+                        if pokemon.stats != nil {
+                            sectionContainer {
+                                statsAndCPContent
+                            }
+                        }
+                        
                         if pokemon.isNotAvailable {
                             notAvailableView
                                 .padding(.bottom, 20)
@@ -179,37 +192,21 @@ struct PokemonDetailView: View {
             .ignoresSafeArea(edges: .top)
         }
         .navigationBarTitleDisplayMode(.inline)
-        .sheet(
-            isPresented: Binding(
-                get: { zoomedImageURL != nil },
-                set: { isPresented in
-                    if !isPresented {
-                        zoomedImageURL = nil
-                    }
-                }
-            )
-        ) {
+        .sheet(item: $zoomedImage) { zoomedImage in
             NavigationStack {
-                ImageZoomView(url: zoomedImageURL) {
-                    zoomedImageURL = nil
+                ImageZoomView(url: zoomedImage.id) {
+                    self.zoomedImage = nil
                 }
-                .ignoresSafeArea()
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .topBarTrailing) {
-                        Button(action: { zoomedImageURL = nil }) {
-                            Image(systemName: "xmark")
-                                .font(.system(size: 14, weight: .bold))
-                                .foregroundStyle(.primary)
-                                .padding(8)
-                                .background(Circle().fill(Color(UIColor.secondarySystemBackground)))
-                        }
+                        Button("Fermer", systemImage: "xmark") { self.zoomedImage = nil }
                     }
                 }
             }
-            .presentationDetents([.fraction(0.70)])
+            .presentationDetents([.fraction(0.68)])
             .presentationDragIndicator(.hidden)
-            .presentationBackground(Color(UIColor.systemBackground).opacity(0.95))
+            .presentationBackground(.clear)
             .interactiveDismissDisabled(false)
         }
     }
@@ -221,28 +218,37 @@ struct PokemonDetailView: View {
             // ── Image principale ──
             Group {
                 if let url = headerImageURL {
-                    // Qualité maximale pour le header — une seule image, pas besoin de downsample
-                    AsyncImage(url: url) { phase in
-                        if let image = phase.image {
-                            image
-                                .resizable()
-                                .aspectRatio(contentMode: .fit)
-                                .onAppear { headerImage = image }
-                        } else if phase.error != nil {
-                            placeholderImage
-                        } else {
-                            if let headerImage {
-                                headerImage
+                    Button {
+                        zoomedImage = ZoomedImageTarget(id: url)
+                    } label: {
+                        AsyncImage(url: url) { phase in
+                            if let image = phase.image {
+                                image
                                     .resizable()
                                     .aspectRatio(contentMode: .fit)
+                                    .onAppear { headerImage = image }
+                                    #if canImport(UIKit)
+                                    .modifier(PixelatedImageModifier(url: url, isAppStoreMode: isAppStoreMode))
+                                    #endif
+                            } else if phase.error != nil {
+                                placeholderImage
                             } else {
-                                ProgressView()
+                                if let headerImage {
+                                    headerImage
+                                        .resizable()
+                                        .aspectRatio(contentMode: .fit)
+                                        #if canImport(UIKit)
+                                        .modifier(PixelatedImageModifier(url: url, isAppStoreMode: isAppStoreMode))
+                                        #endif
+                                } else {
+                                    ProgressView()
+                                }
                             }
                         }
                     }
+                    .buttonStyle(.plain)
                     .id(url) // Force SwiftUI à recréer la vue au changement d'URL (normal ↔ shiny)
                     .frame(width: 320, height: 320)
-                    .onTapGesture { zoomedImageURL = url }
                 } else {
                     placeholderImage
                         .frame(width: 320, height: 320)
@@ -258,7 +264,7 @@ struct PokemonDetailView: View {
                 Text(pokemon.name)
                     .font(.system(size: 28, weight: .bold, design: .rounded))
                 
-                Text(String(format: "#%03d", pokemon.dexNr))
+                Text("#\(pokemon.dexNr.formatted(.number.precision(.integerLength(3))))")
                     .font(.system(size: 13, weight: .semibold, design: .monospaced))
                     .foregroundStyle(.secondary)
                 
@@ -530,7 +536,7 @@ struct PokemonDetailView: View {
                             .contentShape(Rectangle())
                     }
                 }
-                .foregroundColor(.white)
+                .foregroundStyle(.white)
                 .background(
                     Capsule()
                         .fill(isShiny ? Color.orange : Color.blue)
@@ -551,7 +557,7 @@ struct PokemonDetailView: View {
                         Text("Capturé")
                             .font(.system(size: 12, weight: .semibold))
                     }
-                    .foregroundColor(.primary)
+                    .foregroundStyle(.primary)
                     .frame(maxWidth: .infinity)
                     .frame(height: 32)
                     .background(
@@ -604,7 +610,7 @@ struct PokemonDetailView: View {
                             .contentShape(Rectangle())
                     }
                 }
-                .foregroundColor(.black)
+                .foregroundStyle(.black)
                 .background(Capsule().fill(Color.yellow))
                 .matchedGeometryEffect(id: "luckyButtonHeader", in: headerAnimationNamespace)
             } else {
@@ -620,7 +626,7 @@ struct PokemonDetailView: View {
                         Text("Chanceux")
                             .font(.system(size: 12, weight: .semibold))
                     }
-                    .foregroundColor(.primary)
+                    .foregroundStyle(.primary)
                     .frame(maxWidth: .infinity)
                     .frame(height: 32)
                     .background(Capsule().fill(Color(.tertiarySystemFill)))
@@ -632,15 +638,8 @@ struct PokemonDetailView: View {
         .animation(.spring(response: 0.3, dampingFraction: 0.7), value: count > 0)
     }
 
-    // Réutiliser le générateur haptique pour éviter les allocations répétées
-    #if canImport(UIKit)
-    private static let hapticGenerator = UIImpactFeedbackGenerator(style: .medium)
-    #endif
-    
     private func triggerHaptic() {
-        #if canImport(UIKit)
-        Self.hapticGenerator.impactOccurred()
-        #endif
+        hapticTrigger += 1
     }
     
     private var placeholderImage: some View {
@@ -649,6 +648,97 @@ struct PokemonDetailView: View {
             .foregroundStyle(.tertiary)
     }
     
+    // MARK: - Stats & PC
+    
+    private var statsAndCPContent: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            sectionHeader("Stats & PC", icon: "chart.bar.fill")
+            
+            VStack(spacing: 16) {
+                // Stats de base
+                if let stats = pokemon.stats {
+                    VStack(spacing: 8) {
+                        if let atk = stats.attack {
+                            statBar(label: "Attaque", value: atk, max: 300, color: .red)
+                        }
+                        if let def = stats.defense {
+                            statBar(label: "Defense", value: def, max: 300, color: .blue)
+                        }
+                        if let sta = stats.stamina {
+                            statBar(label: "PV", value: sta, max: 300, color: .green)
+                        }
+                    }
+                }
+                
+                // PC
+                VStack(spacing: 10) {
+                    if let cp = pokemon.perfectRaidCP {
+                        cpRow(label: "PC Raid (100%)", value: "\(cp)", icon: "bolt.shield.fill", color: .red)
+                    }
+                    if let cpBoosted = pokemon.perfectRaidBoostedCP {
+                        cpRow(label: "PC Raid Booste Meteo (100%)", value: "\(cpBoosted)", icon: "cloud.sun.fill", color: .orange)
+                    }
+                    if let cpQuest = pokemon.perfectQuestCP {
+                        cpRow(label: "PC Quete/Recherche (100%)", value: "\(cpQuest)", icon: "magnifyingglass", color: .purple)
+                    }
+                    if let cpMax = pokemon.maxCP50 {
+                        cpRow(label: "PC Max (Niv.50)", value: "\(cpMax)", icon: "star.fill", color: .yellow)
+                    }
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 16)
+        }
+    }
+    
+    private func statBar(label: String, value: Int, max: Int, color: Color) -> some View {
+        HStack(spacing: 8) {
+            Text(label)
+                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .frame(width: 65, alignment: .leading)
+                .foregroundStyle(.secondary)
+            
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(Color(UIColor.tertiarySystemFill))
+                        .frame(height: 8)
+                    
+                    Capsule()
+                        .fill(color)
+                        .frame(width: geo.size.width * min(CGFloat(value) / CGFloat(max), 1.0), height: 8)
+                }
+            }
+            .frame(height: 8)
+            
+            Text("\(value)")
+                .font(.system(size: 13, weight: .bold, design: .rounded))
+                .frame(width: 40, alignment: .trailing)
+        }
+    }
+    
+    private func cpRow(label: String, value: String, icon: String, color: Color) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(color)
+                .frame(width: 24)
+            
+            Text(label)
+                .font(.system(size: 12, weight: .medium, design: .rounded))
+                .foregroundStyle(.secondary)
+            
+            Spacer()
+            
+            Text(value)
+                .font(.system(size: 15, weight: .bold, design: .rounded))
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color(UIColor.tertiarySystemGroupedBackground))
+        .clipShape(.rect(cornerRadius: 10))
+    }
+
     // MARK: - Section Container
     
     private func sectionContainer<Content: View>(@ViewBuilder content: () -> Content) -> some View {
@@ -904,6 +994,7 @@ struct PokemonDetailView: View {
                     .font(.system(size: 9, weight: .bold, design: .rounded))
             }
         }
+        .sensoryFeedback(.impact(weight: .medium), trigger: hapticTrigger)
     }
 
     @ViewBuilder
@@ -1023,7 +1114,7 @@ struct PokemonDetailView: View {
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
                     
-                    Text(String(format: "#%03d", dexNr))
+                    Text("#\(dexNr.formatted(.number.precision(.integerLength(3))))")
                         .font(.system(size: 9, weight: .semibold, design: .monospaced))
                         .foregroundStyle(.tertiary)
                 }
@@ -1151,7 +1242,7 @@ struct PokemonDetailView: View {
                                 displayMode: displayMode,
                                 showCaptureControls: showCaptureControls,
                                 viewModel: viewModel,
-                                onImageTap: { url in zoomedImageURL = url }
+                                onImageTap: { url in zoomedImage = ZoomedImageTarget(id: url) }
                             )
                         }
                     }
@@ -1212,13 +1303,12 @@ struct PokemonDetailView: View {
     private func filteredVariantForms(from forms: [AssetForm]) -> [AssetForm] {
         let variantsOnly = baseVariantForms(from: forms)
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let loweredQuery = query.lowercased()
 
         let filtered = variantsOnly.filter { form in
-            query.isEmpty || form.displayName.lowercased().contains(loweredQuery)
+            query.isEmpty || form.displayName.localizedStandardContains(query)
         }
         
-        return filtered.sorted { $0.displayName.lowercased() < $1.displayName.lowercased() }
+        return filtered.sorted { $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending }
     }
 }
 
@@ -1227,25 +1317,31 @@ struct PokemonDetailView: View {
 struct ImageZoomView: View {
     let url: URL?
     let onDismiss: () -> Void
+    private let baseImageScale: CGFloat = 1.14
     @State private var scale: CGFloat = 1.0
     
     var body: some View {
         ZStack {
-            Color.clear
-                .ignoresSafeArea()
-                .contentShape(Rectangle())
-                .onTapGesture { dismiss() }
+            Button(action: dismiss) {
+                Color.clear
+                    .ignoresSafeArea()
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
 
-            VStack {
-                Spacer()
+            VStack(spacing: 0) {
+                Spacer(minLength: 0)
+
                 if let url = url {
-                    // Qualité maximale pour le zoom — une seule image
                     AsyncImage(url: url) { phase in
                         if let image = phase.image {
                             image
                                 .resizable()
                                 .aspectRatio(contentMode: .fit)
-                                .scaleEffect(scale)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .scaleEffect(baseImageScale * scale)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 20)
                                 .gesture(
                                     MagnifyGesture()
                                         .onChanged { value in scale = value.magnification }
@@ -1264,11 +1360,11 @@ struct ImageZoomView: View {
                             ProgressView().tint(.white).scaleEffect(1.5)
                         }
                     }
-                    .padding(.horizontal, 20)
                 } else {
                     ProgressView().scaleEffect(1.5)
                 }
-                Spacer()
+
+                Spacer(minLength: 0)
             }
         }
     }
@@ -1289,13 +1385,10 @@ struct VariantCard: View {
     let showCaptureControls: Bool
     @ObservedObject var viewModel: PogodexViewModel
     let onImageTap: (URL) -> Void
+    @State private var hapticTrigger = 0
     
-    // Haptics
     private func triggerHaptic() {
-        #if canImport(UIKit)
-        let generator = UIImpactFeedbackGenerator(style: .medium)
-        generator.impactOccurred()
-        #endif
+        hapticTrigger += 1
     }
     
     var body: some View {
@@ -1381,20 +1474,34 @@ struct VariantCard: View {
     // MARK: - Image
     
     private var variantImage: some View {
-        Group {
-            let formUrl = pokemon.highResImageURL(for: form, shiny: displayMode == .shiny)
-            
+        let formUrl = pokemon.highResImageURL(for: form, shiny: displayMode == .shiny)
+        // Fallback à l'image principale du Pokémon si la variante n'en a pas
+        let finalUrl: URL? = {
             if let url = formUrl {
-                CachedAsyncImage(url: url, size: 70, contentMode: .fit)
-                    .frame(width: 70, height: 70)
-                    .onTapGesture { onImageTap(url) }
+                return url
+            } else if let assetImg = displayMode == .shiny ? pokemon.assets?.shinyImage : pokemon.assets?.image {
+                return URL(string: assetImg)
+            }
+            return nil
+        }()
+        
+        return Group {
+            if let url = finalUrl {
+                Button {
+                    onImageTap(url)
+                } label: {
+                    CachedAsyncImage(url: url, size: 70, contentMode: .fit)
+                        .frame(width: 70, height: 70)
+                }
+                .buttonStyle(.plain)
             } else {
                 Image(systemName: "photo")
-                .font(.system(size: 24))
-                .foregroundStyle(.tertiary)
-                .frame(width: 70, height: 70)
+                    .font(.system(size: 24))
+                    .foregroundStyle(.tertiary)
+                    .frame(width: 70, height: 70)
             }
         }
+        .sensoryFeedback(.impact(weight: .medium), trigger: hapticTrigger)
     }
     
     // MARK: - Contrôles Actions
@@ -1442,7 +1549,7 @@ struct VariantCard: View {
                             .contentShape(Rectangle())
                     }
                 }
-                .foregroundColor(.white)
+                .foregroundStyle(.white)
                 .background(Capsule().fill(isShiny ? Color.orange : Color.blue))
                 .matchedGeometryEffect(id: "captureButton", in: animationNamespace)
             } else {
@@ -1459,7 +1566,7 @@ struct VariantCard: View {
                         Text("Capturé")
                             .font(.system(size: 12, weight: .semibold))
                     }
-                    .foregroundColor(.primary)
+                    .foregroundStyle(.primary)
                     .frame(maxWidth: .infinity)
                     .frame(height: 32)
                     .background(Capsule().fill(Color(.tertiarySystemFill)))
@@ -1509,7 +1616,7 @@ struct VariantCard: View {
                             .contentShape(Rectangle())
                     }
                 }
-                .foregroundColor(.black)
+                .foregroundStyle(.black)
                 .background(Capsule().fill(Color.yellow))
                 .matchedGeometryEffect(id: "luckyButton", in: animationNamespace)
             } else {
@@ -1525,7 +1632,7 @@ struct VariantCard: View {
                         Text("Chanceux")
                             .font(.system(size: 12, weight: .semibold))
                     }
-                    .foregroundColor(.primary)
+                    .foregroundStyle(.primary)
                     .frame(maxWidth: .infinity)
                     .frame(height: 32)
                     .background(Capsule().fill(Color(.tertiarySystemFill)))

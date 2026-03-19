@@ -32,27 +32,19 @@ struct ContentView: View {
             }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    // Bouton Filtre à gauche
-                    Menu {
+                    Menu("Filtrer", systemImage: "line.3.horizontal.decrease") {
                         Picker("Filtrer par", selection: $filterMode) {
                             ForEach(SearchView.FilterMode.allCases) { mode in
                                 Label(mode.rawValue, systemImage: iconForMode(mode))
                                     .tag(mode)
                             }
                         }
-                    } label: {
-                        Image(systemName: "line.3.horizontal.decrease")
-                            .font(.system(size: 16))
                     }
                 }
                 
                 ToolbarItem(placement: .topBarTrailing) {
-                    // Bouton Paramètres à droite
-                    Button {
+                    Button("Réglages", systemImage: "gearshape") {
                         showSettings = true
-                    } label: {
-                        Image(systemName: "gearshape")
-                            .font(.system(size: 16))
                     }
                 }
             }
@@ -88,7 +80,7 @@ struct ContentView: View {
                 Task { await viewModel.fetchPokemon() }
             }
             .font(.system(size: 14, weight: .semibold, design: .rounded))
-            .foregroundColor(.white)
+            .foregroundStyle(.white)
             .padding(.horizontal, 24)
             .padding(.vertical, 10)
             .background(Capsule().fill(.blue))
@@ -320,7 +312,8 @@ struct SearchView: View {
         }
         
         guard !searchText.isEmpty else { return baseList }
-        let query = searchText.lowercased()
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedQuery = query.folding(options: .diacriticInsensitive, locale: .current)
         
         if query.hasPrefix("#"), let num = Int(query.dropFirst()) {
             return baseList.filter { $0.dexNr == num }
@@ -329,29 +322,22 @@ struct SearchView: View {
         let currentLang = localizedLanguageKey()
         
         return baseList.filter { pokemon in
-            // Ignorer les accents et la casse pour le nom
-            let nameMatch = pokemon.name.folding(options: .diacriticInsensitive, locale: .current)
-                .lowercased()
-                .contains(query.folding(options: .diacriticInsensitive, locale: .current))
+            let normalizedName = pokemon.name.folding(options: .diacriticInsensitive, locale: .current)
+            let nameMatch = normalizedName.localizedStandardContains(normalizedQuery)
             
             let dexMatch = String(pokemon.dexNr).contains(query)
             
-            // Recherche par type (uniquement dans la langue actuelle)
             let primaryTypeMatch = pokemon.primaryType?.names[currentLang]?
                 .folding(options: .diacriticInsensitive, locale: .current)
-                .lowercased()
-                .contains(query.folding(options: .diacriticInsensitive, locale: .current)) ?? false
-                
+                .localizedStandardContains(normalizedQuery) ?? false
+            
             let secondaryTypeMatch = pokemon.secondaryType?.names[currentLang]?
                 .folding(options: .diacriticInsensitive, locale: .current)
-                .lowercased()
-                .contains(query.folding(options: .diacriticInsensitive, locale: .current)) ?? false
+                .localizedStandardContains(normalizedQuery) ?? false
             
-            // Recherche par région
-            let regionMatch = viewModel.regionName(for: pokemon.generation)
+            let normalizedRegion = viewModel.regionName(for: pokemon.generation)
                 .folding(options: .diacriticInsensitive, locale: .current)
-                .lowercased()
-                .contains(query.folding(options: .diacriticInsensitive, locale: .current))
+            let regionMatch = normalizedRegion.localizedStandardContains(normalizedQuery)
             
             return nameMatch || dexMatch || primaryTypeMatch || secondaryTypeMatch || regionMatch
         }
@@ -365,7 +351,7 @@ struct SearchView: View {
     var body: some View {
         NavigationStack {
             searchContent
-                .background(Color(UIColor.systemGroupedBackground))
+                .background(Color(.systemGroupedBackground))
                 .navigationTitle("Recherche")
         }
         .searchable(
@@ -375,32 +361,16 @@ struct SearchView: View {
         )
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                HStack(spacing: 12) {
-                    // Bouton Filtre
-                    Menu {
-                        Picker("Filtrer par", selection: $filterMode) {
-                            ForEach(FilterMode.allCases) { mode in
-                                Label(mode.rawValue, systemImage: iconForMode(mode))
-                                    .tag(mode)
-                            }
+                Menu("Filtrer", systemImage: "line.3.horizontal.decrease.circle") {
+                    Picker("Filtrer par", selection: $filterMode) {
+                        ForEach(FilterMode.allCases) { mode in
+                            Label(mode.rawValue, systemImage: iconForMode(mode))
+                                .tag(mode)
                         }
-                    } label: {
-                        Image(systemName: "line.3.horizontal.decrease.circle")
-                            .font(.system(size: 16))
-                    }
-                    
-                        // Bouton Paramètres
-                        /*
-                        Button {
-                            showSettings = true
-                        } label: {
-                            Image(systemName: "gearshape")
-                                .font(.system(size: 16))
-                        }
-                        */
                     }
                 }
             }
+        }
     }
     
     private func iconForMode(_ mode: FilterMode) -> String {

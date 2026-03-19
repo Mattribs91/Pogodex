@@ -11,7 +11,7 @@ struct CreditsView: View {
                     VStack(alignment: .leading, spacing: 12) {
                         HStack {
                             Image(systemName: "exclamationmark.triangle.fill")
-                                .foregroundColor(.yellow)
+                                .foregroundStyle(.yellow)
                             Text("Avertissement Légal")
                                 .font(.headline)
                         }
@@ -36,7 +36,7 @@ struct CreditsView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
                             Image(systemName: "server.rack")
-                                .foregroundColor(.blue)
+                                .foregroundStyle(.blue)
                             Text("Pokémon GO API")
                                 .font(.headline)
                         }
@@ -50,7 +50,7 @@ struct CreditsView: View {
                                 Image(systemName: "arrow.up.right.square")
                             }
                             .font(.subheadline)
-                            .foregroundColor(.blue)
+                            .foregroundStyle(.blue)
                         }
                         .padding(.top, 4)
                     }
@@ -59,7 +59,7 @@ struct CreditsView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
                             Image(systemName: "photo.artframe")
-                                .foregroundColor(.purple)
+                                .foregroundStyle(.purple)
                             Text("PokéAPI")
                                 .font(.headline)
                         }
@@ -73,7 +73,7 @@ struct CreditsView: View {
                                 Image(systemName: "arrow.up.right.square")
                             }
                             .font(.subheadline)
-                            .foregroundColor(.blue)
+                            .foregroundStyle(.blue)
                         }
                         .padding(.top, 4)
                     }
@@ -84,7 +84,7 @@ struct CreditsView: View {
                 Section {
                     HStack {
                         Image(systemName: "heart.fill")
-                            .foregroundColor(.red)
+                            .foregroundStyle(.red)
                         Text("Créé avec passion pour la communauté Pokémon GO.")
                             .font(.subheadline)
                     }
